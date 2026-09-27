@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Environment Variables & Secrets (CRITICAL: Do NOT commit)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# Build & Dist
+dist/
+out/
+build/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AI / System Generated
+.system_generated/

@@ -1,0 +1,16 @@
+{
+  "name": "jev-chromium",
+  "version": "0.1.0",
+  "description": "Embedded Chromium AI Browser powered by Jev Ultrafast Agent",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test:model": "node scripts/test-model.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "electron": "^34.2.0"
+  }
+}

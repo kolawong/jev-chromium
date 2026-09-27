@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jev Chromium</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- 56px Unified Header -->
+  <header class="agent-bar">
+    <div class="window-drag-handle"></div>
+
+    <!-- Left: Brand & Pixel Grid Indicator -->
+    <div class="brand-group">
+      <div class="brand-badge">
+        <span class="brand-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+          </svg>
+        </span>
+        <span>Jev</span>
+      </div>
+
+      <!-- Beautiful UI Pixel Grid Loader (01 Loading State) -->
+      <div class="pixel-grid" id="pixelGrid" title="Agent 运行状态">
+        <span class="pixel-dot"></span>
+        <span class="pixel-dot"></span>
+        <span class="pixel-dot"></span>
+        <span class="pixel-dot"></span>
+        <span class="pixel-dot"></span>
+        <span class="pixel-dot"></span>
+        <span class="pixel-dot"></span>
+        <span class="pixel-dot"></span>
+        <span class="pixel-dot"></span>
+      </div>
+    </div>
+
+    <!-- Center: Beautiful UI Prompt Bar (08 Prompt Bar) -->
+    <div class="prompt-composer" id="promptComposer">
+      <span class="prompt-sparkle">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/>
+        </svg>
+      </span>
+
+      <input type="text" id="promptInput" class="prompt-input" placeholder="输入自然语言目标（如：查询航班）或直接输入网址..." autocomplete="off" spellcheck="false">
+
+      <div class="model-pill clickable" id="modelPillBtn" title="点击配置模型与 API Key">
+        <span class="dot"></span>
+        <span id="topModelLabel">Jev 1.0</span>
+      </div>
+
+      <div class="prompt-actions">
+        <!-- Main Run / Pause / Resume Button -->
+        <button id="mainBtn" class="btn-primary" title="运行目标或前往网址 (Enter)">
+          <span id="mainBtnIcon">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          </span>
+          <span id="mainBtnLabel">运行</span>
+        </button>
+
+        <!-- Step Button -->
+        <button id="stepBtn" class="btn-quiet" title="单步执行">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 4 15 12 5 20 5 4" fill="currentColor"/><line x1="19" y1="5" x2="19" y2="19"/>
+          </svg>
+        </button>
+
+        <!-- Reset Button -->
+        <button id="resetBtn" class="btn-quiet hidden" title="重置任务">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Right: Browser Nav, Settings & Drawer Toggle -->
+    <div class="header-right">
+      <div class="nav-cluster">
+        <button id="backBtn" class="btn-nav-icon" title="后退">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
+          </svg>
+        </button>
+        <button id="forwardBtn" class="btn-nav-icon" title="前进">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+          </svg>
+        </button>
+        <button id="reloadBtn" class="btn-nav-icon" title="刷新">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+        </button>
+        <button id="homeBtn" class="btn-nav-icon" title="主页">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <polyline points="9 22 9 12 15 12 15 22"/>
+          </svg>
+        </button>
+      </div>
+
+      <button id="settingsBtn" class="btn-nav-icon" title="设置模型与 API Key">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+
+      <button id="drawerToggleBtn" class="btn-drawer-toggle active" title="展开/收起执行面板">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="15" y1="3" x2="15" y2="21"/>
+        </svg>
+        <span>执行轨迹</span>
+        <span id="stepCountBadge" class="drawer-badge">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Side Trace & Logs Drawer (Beautiful UI Primitives) -->
+  <aside id="traceDrawer" class="trace-drawer">
+    <!-- Drawer Header Tabs -->
+    <div class="drawer-header">
+      <div class="drawer-tabs">
+        <button id="tabStepsBtn" class="tab-btn active">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+            <path d="M9 14l2 2 4-4"/>
+          </svg>
+          <span>步骤轨迹</span>
+          <span id="tabStepCount" class="tab-count">0</span>
+        </button>
+        <button id="tabLogsBtn" class="tab-btn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+          </svg>
+          <span>详细日志</span>
+          <span id="tabLogCount" class="tab-count">0</span>
+        </button>
+        <button id="tabSettingsBtn" class="tab-btn" title="模型与 API 配置">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          <span>设置</span>
+        </button>
+      </div>
+
+      <button id="closeDrawerBtn" class="btn-quiet" title="收起面板">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Real-time KPIs -->
+    <div class="drawer-kpis">
+      <div class="kpi-box">
+        <span class="kpi-lbl">总耗时</span>
+        <span id="kpiElapsed" class="kpi-val">0.0s</span>
+      </div>
+      <div class="kpi-box">
+        <span class="kpi-lbl">已执行</span>
+        <span id="kpiSteps" class="kpi-val">0 步</span>
+      </div>
+      <div class="kpi-box">
+        <span class="kpi-lbl">当前状态</span>
+        <span id="kpiStatus" class="kpi-val">就绪</span>
+      </div>
+    </div>
+
+    <!-- Drawer Content Views -->
+    <div class="drawer-content">
+      <!-- View 1: Steps View (Beautiful UI Task Rows) -->
+      <div id="stepsView" class="view-panel">
+        <!-- Thinking State Banner (02 Thinking State) -->
+        <div id="thinkingBanner" class="thinking-card hidden">
+          <div class="thinking-left">
+            <div class="pixel-grid is-loading">
+              <span class="pixel-dot"></span>
+              <span class="pixel-dot"></span>
+              <span class="pixel-dot"></span>
+              <span class="pixel-dot"></span>
+              <span class="pixel-dot"></span>
+              <span class="pixel-dot"></span>
+              <span class="pixel-dot"></span>
+              <span class="pixel-dot"></span>
+              <span class="pixel-dot"></span>
+            </div>
+            <span id="thinkingText" class="shimmer-text">正在分析网页并决策...</span>
+          </div>
+          <span id="thinkingTimer" class="thinking-timer">0.0s</span>
+        </div>
+
+        <!-- Task Rows Container -->
+        <div id="stepsContainer" style="display:flex; flex-direction:column; gap:8px;"></div>
+
+        <!-- Empty State for Steps -->
+        <div id="stepsEmpty" class="empty-box">
+          <div class="empty-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+          </div>
+          <span class="empty-title">暂无执行步骤</span>
+          <span class="empty-sub">在上方输入目标或点击上方快捷标签，Jev 将在此实时呈现任务执行卡片。</span>
+        </div>
+      </div>
+
+      <!-- View 2: Logs View (Beautiful UI 12 Records Table style) -->
+      <div id="logsView" class="view-panel hidden">
+        <div class="logs-toolbar">
+          <div class="log-filters">
+            <button class="filter-btn active" data-filter="all">全部</button>
+            <button class="filter-btn" data-filter="MODEL">决策</button>
+            <button class="filter-btn" data-filter="ACT">动作</button>
+            <button class="filter-btn" data-filter="ERROR">错误</button>
+          </div>
+          <div class="log-actions">
+            <button id="copyLogsBtn" class="btn-tool" title="复制所有日志">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              <span>复制</span>
+            </button>
+            <button id="clearLogsBtn" class="btn-tool" title="清空日志">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+              <span>清空</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="logsContainer" class="logs-list"></div>
+
+        <div id="logsEmpty" class="empty-box">
+          <span class="empty-title">暂无运行日志</span>
+          <span class="empty-sub">任务启动或页面加载后，系统执行流将在此实时显示。</span>
+        </div>
+      </div>
+      <!-- View 3: Settings View (Beautiful UI Style inside Drawer) -->
+      <div id="settingsView" class="view-panel hidden">
+        <!-- Section 1: Jev Decision Model -->
+        <div class="settings-section">
+          <div class="section-header">
+            <span class="section-badge">核心驱动</span>
+            <span class="section-title">Jev 视觉决策模型 (TypeSafe)</span>
+          </div>
+
+          <div class="form-item">
+            <label class="form-label" for="cfgTypeSafeApiKey">TypeSafe / Jev API Key</label>
+            <div class="input-with-action">
+              <input type="password" id="cfgTypeSafeApiKey" class="form-input" placeholder="输入 apikey_..." autocomplete="off">
+              <button type="button" class="btn-input-icon toggle-pwd-btn" data-target="cfgTypeSafeApiKey" title="显示/隐藏 Key">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-grid-2">
+            <div class="form-item">
+              <label class="form-label" for="cfgTypeSafeModel">Jev 模型版本</label>
+              <input type="text" id="cfgTypeSafeModel" class="form-input font-mono" value="jev-latest" placeholder="jev-latest">
+            </div>
+            <div class="form-item form-item-action">
+              <label class="form-label">&nbsp;</label>
+              <button type="button" id="testJevBtn" class="btn-tool btn-test-conn" title="验证 Jev API Key 是否有效">
+                <span class="test-icon">⚡</span>
+                <span>测试 Jev 连接</span>
+              </button>
+            </div>
+          </div>
+          <div id="testJevFeedback" class="test-feedback hidden"></div>
+        </div>
+
+        <!-- Section 2: Helper Text Model -->
+        <div class="settings-section">
+          <div class="section-header">
+            <span class="section-badge secondary">辅助填写</span>
+            <span class="section-title">文本生成模型 (表单预测)</span>
+          </div>
+
+          <!-- Quick Provider Pills -->
+          <div class="provider-bar">
+            <span class="provider-hint">服务商:</span>
+            <button type="button" class="provider-pill active" data-provider="minimax">MiniMax</button>
+            <button type="button" class="provider-pill" data-provider="deepseek">DeepSeek</button>
+            <button type="button" class="provider-pill" data-provider="openai">OpenAI</button>
+            <button type="button" class="provider-pill" data-provider="custom">自定义</button>
+          </div>
+
+          <div class="form-item">
+            <label class="form-label" for="cfgTextModelBaseUrl">API Base URL</label>
+            <input type="text" id="cfgTextModelBaseUrl" class="form-input font-mono" placeholder="https://api.minimaxi.com/v1">
+          </div>
+
+          <div class="form-item">
+            <label class="form-label" for="cfgTextModelApiKey">模型 API Key</label>
+            <div class="input-with-action">
+              <input type="password" id="cfgTextModelApiKey" class="form-input" placeholder="输入 sk-..." autocomplete="off">
+              <button type="button" class="btn-input-icon toggle-pwd-btn" data-target="cfgTextModelApiKey" title="显示/隐藏 Key">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-grid-2">
+            <div class="form-item">
+              <label class="form-label" for="cfgTextModel">模型名称 (Model)</label>
+              <input type="text" id="cfgTextModel" class="form-input font-mono" placeholder="MiniMax-M3">
+            </div>
+            <div class="form-item form-item-action">
+              <label class="form-label">&nbsp;</label>
+              <button type="button" id="testTextModelBtn" class="btn-tool btn-test-conn" title="验证模型 API 是否能正常响应">
+                <span class="test-icon">⚡</span>
+                <span>测试文本模型</span>
+              </button>
+            </div>
+          </div>
+          <div id="testTextFeedback" class="test-feedback hidden"></div>
+        </div>
+
+        <!-- Save Button & Hint -->
+        <div style="display:flex; flex-direction:column; gap:8px; margin-top:4px;">
+          <button type="button" id="saveSettingsBtn" class="btn-primary" style="height:34px; width:100%; font-size:13px;">保存配置并应用</button>
+          <span id="saveStatusHint" class="save-status-hint" style="text-align:center;">配置修改后即时热更新生效并写入本地 .env</span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
