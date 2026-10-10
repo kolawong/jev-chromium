@@ -3,7 +3,11 @@
  * This script runs directly inside the target WebContents page context.
  */
 
+const { adaptersForInjection } = require('./sites');
+const __SITE_ADAPTERS__ = adaptersForInjection();
+
 const SNAPSHOT_SCRIPT = `(() => {
+  const __SITE_ADAPTERS__ = ${JSON.stringify(__SITE_ADAPTERS__)};
   if (!document.body) return null;
   const cache = window.__jevFast ||= {ids:new WeakMap(), nodes:new Map(), next:1};
   const identity = e => {
@@ -14,13 +18,12 @@ const SNAPSHOT_SCRIPT = `(() => {
   const safe = e => !['password','file','hidden'].includes(e.type);
   const visible = e => !e.closest('[aria-hidden="true"],[inert]') &&
     e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true});
-  // Identify organic search result title links on search engines
-  const isSearchPage = /baidu\\.com\\/s|google\\.[a-z.]+\\/search|bing\\.com\\/search|sogou\\.com\\/web|so\\.com\\/s/i.test(location.href);
+  // Identify organic search result title links via site adapters
+  const matchedAdapter = (__SITE_ADAPTERS__ || []).find((a) => new RegExp(a.pagePatternSource, 'i').test(location.href));
+  const isSearchPage = Boolean(matchedAdapter);
   const searchResultLinks = new Map();
-  if (isSearchPage) {
-    const resultContainers = document.querySelectorAll(
-      '#content_left .result, #content_left .c-container, #content_left [tpl], #rso .g, #b_results .b_algo, .results .rb, .result'
-    );
+  if (matchedAdapter) {
+    const resultContainers = document.querySelectorAll(matchedAdapter.resultContainers);
     let ordinal = 1;
     for (const container of resultContainers) {
       if (!visible(container)) continue;
@@ -30,12 +33,13 @@ const SNAPSHOT_SCRIPT = `(() => {
       }
     }
     if (searchResultLinks.size === 0) {
-      const headingLinks = document.querySelectorAll('#content_left h3 a, h2 a, h3 a');
+      const headingLinks = document.querySelectorAll(matchedAdapter.headingLinks);
+      const noise = new RegExp(matchedAdapter.noiseLabel, 'i');
       let fallbackOrd = 1;
       for (const hl of headingLinks) {
         if (!visible(hl)) continue;
         const txt = hl.innerText.trim();
-        if (txt.length > 3 && !/百度|设置|登录|广告|推广|热搜|相关搜索/i.test(txt)) {
+        if (txt.length > 3 && !noise.test(txt)) {
           searchResultLinks.set(hl, fallbackOrd++);
         }
       }

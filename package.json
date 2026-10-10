@@ -5,7 +5,10 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test:model": "node scripts/test-model.js"
+    "test:model": "node scripts/test-model.js",
+    "test:proxy": "electron scripts/proxy-smoke.js",
+    "test:unit": "node scripts/test-unit.js",
+    "test": "npm run test:unit && npm run test:proxy"
   },
   "dependencies": {
     "dotenv": "^16.4.7"

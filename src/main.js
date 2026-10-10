@@ -46,6 +46,9 @@ function createWindow() {
 
   // Persistent user session: retains cookies, logins, and localStorage across runs (like Ego Lite)
   userSession = session.fromPartition('persist:jev-user-profile', { cache: true });
+  userSession.setProxy({ mode: 'system' }).catch((err) => {
+    console.warn('[Main] userSession setProxy(system) failed:', err?.message || err);
+  });
   userSession.setUserAgent(
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
   );
@@ -309,7 +312,13 @@ ipcMain.handle('agent:status', async () => {
   };
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  try {
+    await session.defaultSession.setProxy({ mode: 'system' });
+    console.log('[Main] defaultSession proxy mode=system (uses VPN/local proxy)');
+  } catch (err) {
+    console.warn('[Main] defaultSession setProxy(system) failed:', err?.message || err);
+  }
   createWindow();
 
   app.on('activate', () => {

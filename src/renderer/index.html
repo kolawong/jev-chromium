@@ -44,6 +44,7 @@
         </svg>
       </span>
 
+      <span id="promptErrorHint" class="prompt-error-hint"></span>
       <input type="text" id="promptInput" class="prompt-input" placeholder="输入自然语言目标（如：查询航班）或直接输入网址..." autocomplete="off" spellcheck="false">
 
       <div class="model-pill clickable" id="modelPillBtn" title="点击配置模型与 API Key">
@@ -174,6 +175,14 @@
 
     <!-- Drawer Content Views -->
     <div class="drawer-content">
+      <div id="humanHandoffBanner" class="handoff-banner hidden" role="status">
+        <span class="handoff-icon" data-icon="user"></span>
+        <div class="handoff-copy">
+          <strong>需要你手动处理</strong>
+          <p id="humanHandoffText">验证码、登录或权限确认完成后，点「我已处理，继续」。</p>
+        </div>
+      </div>
+
       <!-- View 1: Steps View (Beautiful UI Task Rows) -->
       <div id="stepsView" class="view-panel">
         <!-- Thinking State Banner (02 Thinking State) -->
@@ -269,7 +278,7 @@
             <div class="form-item form-item-action">
               <label class="form-label">&nbsp;</label>
               <button type="button" id="testJevBtn" class="btn-tool btn-test-conn" title="验证 Jev API Key 是否有效">
-                <span class="test-icon">⚡</span>
+                <span class="test-icon" data-icon="zap"></span>
                 <span>测试 Jev 连接</span>
               </button>
             </div>
@@ -316,7 +325,7 @@
             <div class="form-item form-item-action">
               <label class="form-label">&nbsp;</label>
               <button type="button" id="testTextModelBtn" class="btn-tool btn-test-conn" title="验证模型 API 是否能正常响应">
-                <span class="test-icon">⚡</span>
+                <span class="test-icon" data-icon="zap"></span>
                 <span>测试文本模型</span>
               </button>
             </div>
@@ -333,6 +342,7 @@
     </div>
   </aside>
 
+  <script src="icons.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

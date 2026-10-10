@@ -8,6 +8,7 @@ const { SNAPSHOT_SCRIPT } = require('./snapshot');
 const { choose, fieldContext, fieldText } = require('./model');
 const { MAX_STEPS } = require('./questions');
 const { logger } = require('./logger');
+const { applyDecisionSafeguards } = require('./safeguards');
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -16,110 +17,6 @@ function sleep(ms) {
 function sha256(data) {
   return crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
 }
-
-function extractRequestedResultIndex(goal) {
-  if (!goal) return null;
-  const numMap = {
-    '一': 1, '1': 1,
-    '二': 2, '两': 2, '2': 2,
-    '三': 3, '3': 3,
-    '四': 4, '4': 4,
-    '五': 5, '5': 5,
-    '六': 6, '6': 6,
-    '七': 7, '7': 7,
-    '八': 8, '8': 8,
-    '九': 9, '9': 9,
-    '十': 10, '10': 10,
-  };
-
-  const cnMatch = goal.match(/(?:点开|打开|点击|查看|进入|浏览)?第\s*([0-9一二两三四五六七八九十]+)\s*(?:个|条|项)\s*(?:搜索结果|结果|链接|网页|新闻|内容)?/i)
-    || goal.match(/第\s*([0-9一二两三四五六七八九十]+)\s*(?:个|条|项)?(?:搜索结果|结果|链接)/i);
-
-  if (cnMatch) {
-    const raw = cnMatch[1].trim();
-    if (numMap[raw]) return numMap[raw];
-    const parsed = parseInt(raw, 10);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
-  }
-
-  const enMap = { first: 1, '1st': 1, second: 2, '2nd': 2, third: 3, '3rd': 3, fourth: 4, '4th': 4, fifth: 5, '5th': 5 };
-  const enMatch = goal.match(/\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\s+(?:search\s+)?(?:result|link)\b/i)
-    || goal.match(/\b(?:result|link)\s*#?\s*([1-9]\d*)\b/i);
-  if (enMatch) {
-    const raw = enMatch[1].toLowerCase();
-    if (enMap[raw]) return enMap[raw];
-    const parsed = parseInt(raw, 10);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
-  }
-
-  return null;
-}
-
-function extractTargetPage(goal) {
-  if (!goal) return null;
-  const numMap = {
-    '一': 1, '1': 1,
-    '二': 2, '两': 2, '2': 2,
-    '三': 3, '3': 3,
-    '四': 4, '4': 4,
-    '五': 5, '5': 5,
-    '六': 6, '6': 6,
-    '七': 7, '7': 7,
-    '八': 8, '8': 8,
-    '九': 9, '9': 9,
-    '十': 10, '10': 10,
-  };
-  const m = goal.match(/(?:翻到|前往|进入|转到|去|到)?\s*第\s*([0-9一二两三四五六七八九十]+)\s*页/i)
-    || goal.match(/page\s*([0-9]+)/i);
-  if (!m) return null;
-  const raw = m[1].trim();
-  if (numMap[raw]) return numMap[raw];
-  const parsed = parseInt(raw, 10);
-  return (!isNaN(parsed) && parsed > 0) ? parsed : null;
-}
-
-function isTargetPageReached(page, history, targetPageNum) {
-  if (!targetPageNum || targetPageNum <= 1) return true;
-
-  const url = page?.url || '';
-  // Baidu: pn = (page - 1) * 10
-  const expectedBaiduPn = (targetPageNum - 1) * 10;
-  if (/baidu\.com\/s/i.test(url)) {
-    const pnMatch = url.match(/[?&]pn=(\d+)/);
-    if (pnMatch && parseInt(pnMatch[1], 10) === expectedBaiduPn) {
-      return true;
-    }
-  }
-
-  // Google / Bing / generic: page=2 or start=10
-  if (new RegExp(`[?&]page=${targetPageNum}\\b`, 'i').test(url)) {
-    return true;
-  }
-
-  // Check history: did we successfully click "下一页" or "第 N 页" with page_changed === true?
-  const hasNavigatedToTargetPage = history.some((h) => {
-    if (!h.page_changed) return false;
-    const actionText = (h.action || '').toLowerCase();
-    return (
-      actionText.includes(`第 ${targetPageNum} 页`) ||
-      actionText.includes(`page ${targetPageNum}`) ||
-      (targetPageNum === 2 && (actionText.includes('下一页') || actionText.includes('next page')))
-    );
-  });
-  if (hasNavigatedToTargetPage) {
-    return true;
-  }
-
-  // Check page text/active pagination element
-  if (page?.text && new RegExp(`第\\s*${targetPageNum}\\s*页`, 'i').test(page.text)) {
-    if (/baidu\.com|google|bing/i.test(url)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 
 class AgentRunner extends EventEmitter {
   constructor(webContents) {
@@ -233,7 +130,9 @@ class AgentRunner extends EventEmitter {
           deltaX: 0,
           deltaY: action.delta,
         });
-      } catch {}
+      } catch (err) {
+        logger.warn('CDP', `ignored error: ${err.message}`);
+      }
       await sleep(250);
       return { executed: action.id };
     }
@@ -249,7 +148,7 @@ class AgentRunner extends EventEmitter {
         const e = window.__jevFast?.nodes.get(action.node);
         if (!e?.isConnected || e.matches(':disabled') || e.closest('[aria-disabled="true"],[inert]') ||
             !e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) return null;
-        try { e.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch {}
+        try { e.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
         const r = e.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
         const clampedX = Math.max(r.left + 5, Math.min(x, innerWidth - 5));
         const clampedY = Math.max(r.top + 5, Math.min(y, innerHeight - 5));
@@ -263,7 +162,7 @@ class AgentRunner extends EventEmitter {
           const commonPager = e.closest('.paging, .pagination, [class*="pager"], [class*="pagination"], form, nav, #page');
           const isPagerHit = commonPager && commonPager.contains(hit);
           if (!sameControl && !sameParent && !isPagerHit) {
-            try { e.click(); return { x: clampedX, y: clampedY, domClicked: true }; } catch {}
+            try { e.click(); return { x: clampedX, y: clampedY, domClicked: true }; } catch (_) {}
             return null;
           }
         }
@@ -307,7 +206,7 @@ class AgentRunner extends EventEmitter {
           const field = window.__jevFast?.nodes.get(action.node);
           if (field) {
             field.focus();
-            try { field.select(); } catch {}
+            try { field.select(); } catch (_) {}
             const isInput = field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement;
             if (isInput) {
               const proto = field instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
@@ -325,7 +224,7 @@ class AgentRunner extends EventEmitter {
             field.dispatchEvent(new Event('change', { bubbles: true }));
           }
         })(${JSON.stringify(action)}, ${JSON.stringify(text || '')})
-      `).catch(() => {});
+      `).catch((err) => { logger.warn('CDP', `ignored error: ${err && err.message ? err.message : err}`); });
 
       // 2. Also send CDP keyboard selectAll + insertText for full browser-level fidelity
       await this.sendCdp('Input.dispatchKeyEvent', {
@@ -334,14 +233,14 @@ class AgentRunner extends EventEmitter {
         code: 'KeyA',
         modifiers: process.platform === 'darwin' ? 4 : 2,
         commands: ['selectAll'],
-      }).catch(() => {});
+      }).catch((err) => { logger.warn('CDP', `ignored error: ${err && err.message ? err.message : err}`); });
       await this.sendCdp('Input.dispatchKeyEvent', {
         type: 'keyUp',
         key: 'a',
         code: 'KeyA',
         modifiers: process.platform === 'darwin' ? 4 : 2,
-      }).catch(() => {});
-      await this.sendCdp('Input.insertText', { text: text || '' }).catch(() => {});
+      }).catch((err) => { logger.warn('CDP', `ignored error: ${err && err.message ? err.message : err}`); });
+      await this.sendCdp('Input.insertText', { text: text || '' }).catch((err) => { logger.warn('CDP', `ignored error: ${err && err.message ? err.message : err}`); });
 
       await this.webContents.executeJavaScript(`
         (() => {
@@ -351,7 +250,7 @@ class AgentRunner extends EventEmitter {
             active.dispatchEvent(new Event('change', { bubbles: true }));
           }
         })()
-      `).catch(() => {});
+      `).catch((err) => { logger.warn('CDP', `ignored error: ${err && err.message ? err.message : err}`); });
 
       // 3. If typing into a general web search engine query box (Baidu, Google, Bing), dispatch Enter
       const isSearchEngine = /baidu\.com|google\.[a-z.]+|bing\.com|sogou\.com|so\.com/i.test(this.page?.url || '');
@@ -366,14 +265,14 @@ class AgentRunner extends EventEmitter {
           nativeVirtualKeyCode: 13,
           text: '\r',
           unmodifiedText: '\r',
-        }).catch(() => {});
+        }).catch((err) => { logger.warn('CDP', `ignored error: ${err && err.message ? err.message : err}`); });
         await this.sendCdp('Input.dispatchKeyEvent', {
           type: 'keyUp',
           key: 'Enter',
           code: 'Enter',
           windowsVirtualKeyCode: 13,
           nativeVirtualKeyCode: 13,
-        }).catch(() => {});
+        }).catch((err) => { logger.warn('CDP', `ignored error: ${err && err.message ? err.message : err}`); });
       }
     }
 
@@ -443,124 +342,16 @@ class AgentRunner extends EventEmitter {
     });
     let selected = this.decision.choice;
 
-    // Prevent premature BLOCKED if scrolling down can reveal pagination or required content
-    if (selected === 'BLOCKED') {
-      const blockedPageNum = extractTargetPage(this.goal);
-      if (blockedPageNum) {
-        const pageBtn = this.page.actions.find(a =>
-          new RegExp(`第\\s*${blockedPageNum}\\s*页|Page\\s*${blockedPageNum}\\b`, 'i').test(a.label)
-        );
-        if (pageBtn) {
-          console.log(`[Pagination Safeguard] Found target page button ${pageBtn.label} (${pageBtn.id}), overriding BLOCKED!`);
-          selected = pageBtn.id;
-        }
-      }
+    const safeguard = applyDecisionSafeguards({
+      selected,
+      decision: this.decision,
+      page: this.page,
+      goal: this.goal,
+      history: this.history,
+    });
+    selected = safeguard.selected;
 
-      if (selected === 'BLOCKED' && this.page.actions.some((a) => a.id === 'scroll_down')) {
-        const goalNeedsScroll = /翻|页|page|scroll|bottom|more|next|下|更多/i.test(this.goal);
-        if (goalNeedsScroll) {
-          console.log('[Pagination Safeguard] Overriding premature BLOCKED with scroll_down to reveal pagination/results');
-          selected = 'scroll_down';
-        }
-      }
-
-      // Search box safeguard: if on a search engine or page with a search input,
-      // and the current goal hasn't been searched yet, override BLOCKED with the search input
-      if (selected === 'BLOCKED') {
-        const searchInput = this.page.actions.find(
-          (a) =>
-            a.kind === 'fill' &&
-            (/搜索|search|kw|wd/i.test(a.label) ||
-              a.role === 'searchbox' ||
-              (a.role === 'textbox' && /搜索/i.test(a.label)))
-        );
-        const hasNotFilledSearch = !this.history.some((h) => h.kind === 'fill');
-        if (searchInput && hasNotFilledSearch) {
-          console.log(`[Search Safeguard] Page has search box [${searchInput.label}], overriding premature BLOCKED with fill!`);
-          selected = searchInput.id;
-        }
-      }
-    }
-    // Target page & ordinal search result safeguard
-    const targetResultOrdinal = extractRequestedResultIndex(this.goal);
-    const targetPageNum = extractTargetPage(this.goal);
-    const targetPageReached = isTargetPageReached(this.page, this.history, targetPageNum);
-    const hasOpenedTargetResult = targetResultOrdinal ? this.history.some(
-      (h) => h.search_result_ordinal === targetResultOrdinal || (h.target && h.target.includes(`搜索结果第 ${targetResultOrdinal} 条`))
-    ) : false;
-
-    // A. Check if the ordinal link goal is already accomplished (clicked on earlier step)
-    if (targetResultOrdinal && hasOpenedTargetResult && !/查看详情后|总结|提取|填写|复制/i.test(this.goal)) {
-      const lastAction = this.history[this.history.length - 1];
-      if (lastAction && (lastAction.search_result_ordinal === targetResultOrdinal || lastAction.opened_target_result)) {
-        logger.info('AGENT', `已成功打开目标第 ${targetResultOrdinal} 条搜索结果网页，任务全部达成！`);
-        this.status = 'done';
-        this.isRunning = false;
-        this.emitState();
-        return;
-      }
-    }
-
-    // B. If goal asked for an ordinal result link, and target page is reached, but link is not opened yet:
-    if (targetResultOrdinal && targetPageReached && !hasOpenedTargetResult) {
-      const targetLink = this.page.actions.find(
-        (a) => a.search_result_ordinal === targetResultOrdinal
-      ) || this.page.actions.find(
-        (a) => a.kind === 'click' && new RegExp(`搜索结果第\\s*${targetResultOrdinal}\\s*条|Search Result #${targetResultOrdinal}\\b`, 'i').test(a.label)
-      );
-
-      if (targetLink) {
-        if (selected === 'DONE' || selected === 'BLOCKED' || selected !== targetLink.id) {
-          logger.action('SEARCH_RESULT', `已翻至目标第 ${targetPageNum || 1} 页，定位目标第 ${targetResultOrdinal} 条搜索结果: [${targetLink.label}] (${targetLink.id})，执行点击打开`);
-          selected = targetLink.id;
-        }
-      } else {
-        if (selected === 'DONE') {
-          const scrollDown = this.page.actions.find(a => a.id === 'scroll_down');
-          if (scrollDown) {
-            logger.info('SEARCH_RESULT', `尚未找到目标第 ${targetResultOrdinal} 条搜索结果，向下滚动寻找目标链接`);
-            selected = scrollDown.id;
-          }
-        }
-      }
-    }
-
-    // C. If goal asked for a specific page, but we haven't reached target page yet:
-    if (targetPageNum && targetPageNum > 1 && !targetPageReached) {
-      if (selected === 'DONE') {
-        const pageBtn = this.page.actions.find(a =>
-          new RegExp(`第\\s*${targetPageNum}\\s*页|Page\\s*${targetPageNum}\\b`, 'i').test(a.label)
-        );
-        if (pageBtn) {
-          logger.info('PAGINATION', `尚未到达第 ${targetPageNum} 页，跳转目标页: [${pageBtn.label}]`);
-          selected = pageBtn.id;
-        } else {
-          const nextBtn = this.page.actions.find(a => /下一页|next page|下一页 >/i.test(a.label));
-          if (nextBtn) {
-            logger.info('PAGINATION', `尚未到达第 ${targetPageNum} 页，点击下一页: [${nextBtn.label}]`);
-            selected = nextBtn.id;
-          } else {
-            selected = 'scroll_down';
-          }
-        }
-      } else {
-        const candidateAction = this.page.actions.find(a => a.id === selected);
-        if (candidateAction && candidateAction.search_result_ordinal) {
-          logger.info('PAGINATION', `目标要求在第 ${targetPageNum} 页操作，拦截第 1 页结果点击，转为翻页`);
-          const pageBtn = this.page.actions.find(a =>
-            new RegExp(`第\\s*${targetPageNum}\\s*页|Page\\s*${targetPageNum}\\b`, 'i').test(a.label)
-          );
-          if (pageBtn) {
-            selected = pageBtn.id;
-          } else {
-            const nextBtn = this.page.actions.find(a => /下一页|next page|下一页 >/i.test(a.label));
-            selected = nextBtn ? nextBtn.id : 'scroll_down';
-          }
-        }
-      }
-    }
-
-    if (selected === 'DONE') {
+    if (safeguard.done) {
       logger.info('AGENT', '任务全部目标已达成，顺利完成！');
       this.status = 'done';
       this.isRunning = false;
@@ -568,42 +359,12 @@ class AgentRunner extends EventEmitter {
       return;
     }
 
-    if (selected === 'BLOCKED') {
-      // Hand-off: Transition to waiting_for_user instead of fatal termination
+    if (safeguard.status === 'waiting_for_user') {
       this.status = 'waiting_for_user';
-      this.blockedReason = 'AI 模型遇到了需要人工协助的节点（如滑块验证码、账号登录、权限拦截或页面确认）。请直接在左侧浏览器中操作，完成后点击【我已处理，继续】。';
+      this.blockedReason = safeguard.blockedReason;
       this.isRunning = false;
       this.emitState({ requiresHumanIntervention: true });
       return;
-    }
-
-    // Anti-loop safeguard: if the model predicts the exact same target that just resulted in page_changed === false
-    const lastStep = this.history[this.history.length - 1];
-    if (lastStep && lastStep.choice === selected && lastStep.page_changed === false) {
-      console.warn(`[Anti-Loop] Target ${selected} (${lastStep.action}) repeated with no page change. Searching for fallback...`);
-      // 1. Check if a confirmation/search button (Done, Apply, Confirm, Search, Submit, 搜索, 查询, 确定) exists on page
-      const confirmAction = this.page.actions.find((a) =>
-        /(done|apply|confirm|ok|select|submit|search|搜索|查询|确定|查航班|检索)/i.test((a.label || '').trim())
-      );
-      if (confirmAction && confirmAction.id !== selected) {
-        logger.info('SAFEGUARD', `检测到重复操作无响应，自动切换点击确认/搜索按钮: [${confirmAction.label}] (${confirmAction.id})`);
-        selected = confirmAction.id;
-      } else if (lastStep.kind === 'fill') {
-        const otherAction = this.page.actions.find(a => a.id !== selected && a.id !== 'wait' && (a.kind === 'click' || a.id === 'scroll_down'));
-        if (otherAction) {
-          logger.info('SAFEGUARD', `检测到输入框重复填入无反馈，切换执行: [${otherAction.label}] (${otherAction.id})`);
-          selected = otherAction.id;
-        }
-      } else if (this.decision.probabilities) {
-        // 2. Fallback to the next best candidate
-        const sorted = Object.entries(this.decision.probabilities)
-          .filter(([id]) => id !== selected && id !== 'BLOCKED' && id !== 'DONE')
-          .sort((a, b) => b[1] - a[1]);
-        if (sorted.length > 0 && this.page.actions.some((a) => a.id === sorted[0][0])) {
-          console.log(`[Anti-Loop] Picking next best candidate: ${sorted[0][0]} (p=${sorted[0][1]})`);
-          selected = sorted[0][0];
-        }
-      }
     }
 
     let action = this.page.actions.find((a) => a.id === selected);

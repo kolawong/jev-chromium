@@ -35,10 +35,10 @@ async function main() {
   console.log('   Confidence:', Math.round(decision.confidence * 100) + '%');
   console.log('   Latency:', decision.latency_ms, 'ms');
 
-  console.log('\n✅ ALL MODEL TESTS PASSED SUCCESSFULLY!');
+  console.log('\nALL MODEL TESTS PASSED SUCCESSFULLY');
 }
 
 main().catch((err) => {
-  console.error('\n❌ TEST FAILED:', err);
+  console.error('\nTEST FAILED:', err);
   process.exit(1);
 });

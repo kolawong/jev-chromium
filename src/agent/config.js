@@ -1,9 +1,9 @@
-const fs = require('fs');
-const path = require('path');
+/**
+ * Settings persistence and connection tests.
+ */
 const { logger } = require('./logger');
 const { choose, fieldText } = require('./model');
-
-const ENV_PATH = path.join(__dirname, '../../.env');
+const { ENV_PATH, upsertEnvVars } = require('./envFile');
 
 function getSettings() {
   return {
@@ -19,34 +19,62 @@ function getSettings() {
 function saveSettings(settings) {
   if (!settings) return { success: false, error: 'Empty settings' };
 
-  // 1. Hot update process.env in-memory
   if (settings.typeSafeApiKey !== undefined) process.env.TYPESAFE_API_KEY = settings.typeSafeApiKey.trim();
   if (settings.typeSafeModel !== undefined) process.env.TYPESAFE_MODEL = settings.typeSafeModel.trim();
   if (settings.textModelApiKey !== undefined) process.env.TEXT_MODEL_API_KEY = settings.textModelApiKey.trim();
-  if (settings.textModelBaseUrl !== undefined) process.env.TEXT_MODEL_BASE_URL = settings.textModelBaseUrl.trim().replace(/\/+$/, '');
+  if (settings.textModelBaseUrl !== undefined) {
+    process.env.TEXT_MODEL_BASE_URL = settings.textModelBaseUrl.trim().replace(/\/+$/, '');
+  }
   if (settings.textModel !== undefined) process.env.TEXT_MODEL = settings.textModel.trim();
-  if (settings.textModelReasoning !== undefined) process.env.TEXT_MODEL_REASONING = settings.textModelReasoning.trim();
+  if (settings.textModelReasoning !== undefined) {
+    process.env.TEXT_MODEL_REASONING = settings.textModelReasoning.trim();
+  }
 
-  // 2. Persist to .env file
   try {
-    const envContent = [
-      `TYPESAFE_API_KEY=${process.env.TYPESAFE_API_KEY || ''}`,
-      `TYPESAFE_MODEL=${process.env.TYPESAFE_MODEL || 'jev-latest'}`,
-      `# Helper LLM for TYPE_TEXT text generation`,
-      `TEXT_MODEL_API_KEY=${process.env.TEXT_MODEL_API_KEY || ''}`,
-      `TEXT_MODEL_BASE_URL=${process.env.TEXT_MODEL_BASE_URL || 'https://api.minimaxi.com/v1'}`,
-      `TEXT_MODEL=${process.env.TEXT_MODEL || 'MiniMax-M3'}`,
-      `TEXT_MODEL_REASONING=${process.env.TEXT_MODEL_REASONING || 'none'}`,
-      '',
-    ].join('\n');
-
-    fs.writeFileSync(ENV_PATH, envContent, 'utf8');
-    logger.info('SYS', `配置已保存并热更新生效: Jev [${process.env.TYPESAFE_MODEL}], 文本模型 [${process.env.TEXT_MODEL}]`);
+    upsertEnvVars({
+      TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY || '',
+      TYPESAFE_MODEL: process.env.TYPESAFE_MODEL || 'jev-latest',
+      TEXT_MODEL_API_KEY: process.env.TEXT_MODEL_API_KEY || '',
+      TEXT_MODEL_BASE_URL: process.env.TEXT_MODEL_BASE_URL || 'https://api.minimaxi.com/v1',
+      TEXT_MODEL: process.env.TEXT_MODEL || 'MiniMax-M3',
+      TEXT_MODEL_REASONING: process.env.TEXT_MODEL_REASONING || 'none',
+    });
+    logger.info(
+      'SYS',
+      `配置已保存并热更新生效: Jev [${process.env.TYPESAFE_MODEL}], 文本模型 [${process.env.TEXT_MODEL}]`
+    );
     return { success: true };
   } catch (err) {
     logger.error('SYS', `写入 .env 失败: ${err.message}`);
     return { success: false, error: err.message };
   }
+}
+
+function classifyConnectionError(err) {
+  const msg = String(err?.message || err || '');
+  const lower = msg.toLowerCase();
+  if (!msg) return '无法连接，请检查网络与系统代理';
+  if (
+    lower.includes('fetch failed') ||
+    lower.includes('network') ||
+    lower.includes('enotfound') ||
+    lower.includes('econnrefused') ||
+    lower.includes('econnreset') ||
+    lower.includes('cert') ||
+    lower.includes('ssl') ||
+    lower.includes('proxy') ||
+    lower.includes('timeout') ||
+    lower.includes('aborted')
+  ) {
+    return `网络/代理异常: ${msg}。请确认系统代理可用，并确保 Electron 已启用 system proxy。`;
+  }
+  if (lower.includes('401') || lower.includes('403') || lower.includes('unauthorized') || lower.includes('invalid api')) {
+    return `鉴权失败: ${msg}。请检查 API Key 是否有效。`;
+  }
+  if (lower.includes('429') || lower.includes('529') || lower.includes('503') || lower.includes('overloaded')) {
+    return `服务繁忙: ${msg}。请稍后重试。`;
+  }
+  return msg;
 }
 
 async function testConnection(type, config) {
@@ -67,9 +95,7 @@ async function testConnection(type, config) {
           url: 'https://test.local',
           title: 'Ping Test',
           text: 'Ping',
-          actions: [
-            { id: 'e1', node: 1, kind: 'click', label: 'OK Button', role: 'button' },
-          ],
+          actions: [{ id: 'e1', node: 1, kind: 'click', label: 'OK Button', role: 'button' }],
         };
         const decision = await choose(fakeState, 'Click OK Button', []);
         return {
@@ -88,7 +114,9 @@ async function testConnection(type, config) {
       const origModel = process.env.TEXT_MODEL;
 
       const testKey = (config?.textModelApiKey || origKey || '').trim();
-      const testBase = (config?.textModelBaseUrl || origBase || 'https://api.minimaxi.com/v1').trim().replace(/\/+$/, '');
+      const testBase = (config?.textModelBaseUrl || origBase || 'https://api.minimaxi.com/v1')
+        .trim()
+        .replace(/\/+$/, '');
       const testModel = (config?.textModel || origModel || 'MiniMax-M3').trim();
 
       if (!testKey) throw new Error('缺少文本生成模型 API Key');
@@ -118,12 +146,14 @@ async function testConnection(type, config) {
 
     throw new Error('未知的测试类型');
   } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, error: classifyConnectionError(err), code: err?.code || null };
   }
 }
 
 module.exports = {
+  ENV_PATH,
   getSettings,
   saveSettings,
   testConnection,
+  classifyConnectionError,
 };

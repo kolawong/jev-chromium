@@ -1,4 +1,4 @@
-# Jev Chromium ⚡
+# Jev Chromium
 
 > **基于 TypeSafe Jev 超快视觉决策大模型与 Beautiful UI 现代设计系统的 AI 原生浏览器应用**  
 > *An AI-native autonomous browser powered by TypeSafe Jev ultrafast visual decision model and Beautiful UI.*
@@ -11,7 +11,7 @@
 
 ---
 
-## 🌟 核心特性 (Key Features)
+## 核心特性 (Key Features)
 
 ### 1. 毫秒级极速视觉决策 (Sub-Second Decision Latency)
 - **告别臃肿的慢速智能体**：传统的 Playwright/CDP 网页 Agent 通常需要 5~15 秒才能完成一步动作决策，且容易遭遇 Token 爆炸。
@@ -34,7 +34,7 @@
 
 ---
 
-## 🏗️ 运行流程架构 (Architecture)
+## ️ 运行流程架构 (Architecture)
 
 ```mermaid
 flowchart TD
@@ -66,12 +66,12 @@ flowchart TD
     Actuator --> UIState[更新抽屉状态卡片 & 日志表格]
     UIState --> NextCycle{任务是否完成 [DONE]?}
     NextCycle -- 否 --> Extract
-    NextCycle -- 是 --> Finished([任务达成 🎉])
+    NextCycle -- 是 --> Finished([任务达成])
 ```
 
 ---
 
-## 🚀 快速上手 (Quick Start)
+## 快速上手 (Quick Start)
 
 ### 1. 环境准备 (Prerequisites)
 - [Node.js](https://nodejs.org/) >= 18.0.0
@@ -112,7 +112,7 @@ npm start
 
 ---
 
-## 🖥️ 核心界面使用指南 (User Interface Guide)
+## ️ 核心界面使用指南 (User Interface Guide)
 
 | 区域 | 功能说明 | 交互技巧 |
 | :--- | :--- | :--- |
@@ -120,11 +120,11 @@ npm start
 | **主按钮** | 控制 Agent 状态 | 空闲时显示 **运行**，运行时为 **暂停**，暂停时为 **继续** |
 | **单步调试** | 单步观察 | 点击 `单步` 按钮触发单次观察与决策，适合排查复杂表单流程 |
 | **侧边抽屉** | 实时轨迹与日志 | 点击右上角菜单按钮可展开/折叠右侧 Drawer 面板 |
-| **设置中心** | 模型管理与连通测试 | 点击顶栏 `Jev 1.0` 胶囊或右上角 ⚙️ 齿轮图标，即可一键进入配置面板 |
+| **设置中心** | 模型管理与连通测试 | 点击顶栏 `Jev 1.0` 胶囊或右上角齿轮图标，即可一键进入配置面板 |
 
 ---
 
-## 📂 项目结构 (Repository Structure)
+## 项目结构 (Repository Structure)
 
 ```text
 jev-chromium/
@@ -153,7 +153,7 @@ jev-chromium/
 
 ---
 
-## ⚙️ 环境变量详解 (Environment Variables)
+## ️ 环境变量详解 (Environment Variables)
 
 | 变量名 | 默认值 | 作用说明 |
 | :--- | :--- | :--- |
@@ -166,7 +166,7 @@ jev-chromium/
 
 ---
 
-## 🛠️ 常用开发命令 (Development Scripts)
+## ️ 常用开发命令 (Development Scripts)
 
 ```bash
 # 启动应用
@@ -181,6 +181,6 @@ node --check src/main.js src/preload.js src/renderer/renderer.js src/agent/*.js
 
 ---
 
-## 📄 开源许可证 (License)
+## 开源许可证 (License)
 
 本项目遵循 [MIT License](LICENSE) 开源协议。

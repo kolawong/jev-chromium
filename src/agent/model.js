@@ -2,28 +2,49 @@
  * Model module: handles TypeSafe Jev speculative decision calls and Text Model generation.
  */
 
-const dns = require('dns');
 const { NEXT_ACTION, TARGET, TEXT_VALUE } = require('./questions');
 const { logger } = require('./logger');
 
-// Fix local ISP DNS timeout for api.typesafe.ai
-const TYPESAFE_IPS = ['44.227.31.201', '100.20.85.248'];
-let typesafeIpIndex = 0;
-const origLookup = dns.lookup;
-dns.lookup = function (hostname, options, callback) {
-  if (typeof options === 'function') {
-    callback = options;
-    options = {};
-  }
-  if (hostname === 'api.typesafe.ai') {
-    const ip = TYPESAFE_IPS[typesafeIpIndex % TYPESAFE_IPS.length];
-    if (options && options.all) {
-      return callback(null, TYPESAFE_IPS.map((address) => ({ address, family: 4 })));
+/**
+ * Use Electron Chromium networking when available so system/VPN proxy is honored.
+ * Plain Node fetch ignores macOS system proxy and trips polluted DNS / dead IP hacks.
+ */
+async function appFetch(url, init = {}) {
+  try {
+    const electron = require('electron');
+    if (electron?.app?.isReady?.() && electron?.net?.fetch) {
+      return electron.net.fetch(url, init);
     }
-    return callback(null, ip, 4);
+  } catch {
+    // not running inside Electron (scripts/tests)
   }
-  return origLookup.call(this, hostname, options, callback);
-};
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    const cause = err?.cause?.message || err?.cause?.code || '';
+    const detail = [err.message, cause].filter(Boolean).join(' | ');
+    const wrapped = new Error(detail || 'fetch failed');
+    wrapped.code = err?.cause?.code || err?.code || 'FETCH_FAILED';
+    throw wrapped;
+  }
+}
+
+async function withRetries(label, maxAttempts, run) {
+  let lastErr;
+  const baseDelays = [800, 1600, 2800];
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await run(attempt);
+    } catch (err) {
+      lastErr = err;
+      logger.warn('MODEL', `${label} 第 ${attempt + 1}/${maxAttempts} 次失败: ${err.message}`);
+      if (attempt >= maxAttempts - 1) break;
+      const waitMs = (baseDelays[attempt] || 3000) + Math.floor(Math.random() * 200);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+  throw lastErr || new Error(`${label} failed`);
+}
 
 function validateChoice(answer, validIds) {
   if (!answer || typeof answer !== 'object') {
@@ -187,7 +208,7 @@ async function choose(state, goal, history, onRetryProgress = null) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout per attempt
 
-      res = await fetch('https://api.typesafe.ai/v1/systemone', {
+      res = await appFetch('https://api.typesafe.ai/v1/systemone', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -210,7 +231,6 @@ async function choose(state, goal, history, onRetryProgress = null) {
       throw new Error(`HTTP ${res.status}: ${detailMsg}`);
     } catch (err) {
       lastErr = err;
-      typesafeIpIndex++;
       logger.warn('MODEL', `Jev 决策模型调用第 ${attempt + 1}/${MAX_ATTEMPTS} 次失败: ${err.message}`);
 
       if (attempt < MAX_ATTEMPTS - 1) {
@@ -356,30 +376,31 @@ async function fieldText(context) {
   }
 
   const started = Date.now();
-  const res = await fetch(`${base}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 256,
-      response_format: { type: 'json_object' },
-      ...reasoning,
-      messages: [
-        { role: 'system', content: TEXT_VALUE },
-        { role: 'user', content: JSON.stringify(context) },
-      ],
-    }),
+  const result = await withRetries('文本生成模型', 3, async () => {
+    const res = await appFetch(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 256,
+        response_format: { type: 'json_object' },
+        ...reasoning,
+        messages: [
+          { role: 'system', content: TEXT_VALUE },
+          { role: 'user', content: JSON.stringify(context) },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Text helper returned HTTP ${res.status}: ${errText}`);
+    }
+    return res.json();
   });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Text helper returned HTTP ${res.status}: ${errText}`);
-  }
-
-  const result = await res.json();
   let rawContent = result.choices?.[0]?.message?.content || '';
   rawContent = rawContent.trim();
   if (rawContent.includes('</think>')) {
@@ -492,39 +513,43 @@ async function parseGoalIntent(prompt, currentUrl = '') {
 5. cleanGoal: 提炼出的核心目标任务描述（简洁清晰，便于在页面搜索框输入或进行自动化交互）。
 输出且仅输出一个纯 JSON 对象，格式如下（绝对不要 markdown 标记，不要任何多余文字）：
 {"targetUrl": "目标网站主页完整 https 网址或 null", "cleanGoal": "该页面上要执行的具体目标描述"}`;
-      const res = await fetch(`${base}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-        body: JSON.stringify({
-          model,
-          max_tokens: 512,
-          thinking: { type: 'disabled' },
-          messages: [
-            { role: 'system', content: sys },
-            { role: 'user', content: `用户指令: ${text}\n当前浏览器正在显示的页面: ${currentUrl} (是否已在通用搜索引擎上: ${isSearchEngine ? '是' : '否'})` },
-          ],
-        }),
+      const data = await withRetries('意图解析模型', 3, async () => {
+        const res = await appFetch(`${base}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+          body: JSON.stringify({
+            model,
+            max_tokens: 512,
+            thinking: { type: 'disabled' },
+            messages: [
+              { role: 'system', content: sys },
+              {
+                role: 'user',
+                content: `用户指令: ${text}\n当前浏览器正在显示的页面: ${currentUrl} (是否已在通用搜索引擎上: ${isSearchEngine ? '是' : '否'})`,
+              },
+            ],
+          }),
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Intent LLM HTTP ${res.status}: ${errText.slice(0, 240)}`);
+        }
+        return res.json();
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        let raw = data.choices?.[0]?.message?.content || '{}';
-        if (raw.includes('</think>')) raw = raw.split('</think>')[1].trim();
-        if (raw.startsWith('```')) {
-          raw = raw.replace(/^```json?\s*/, '').replace(/```\s*$/, '').trim();
-        }
-        const parsed = JSON.parse(raw);
-        if (parsed.targetUrl) {
-          let url = parsed.targetUrl.trim();
-          if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-          return {
-            targetUrl: url,
-            cleanGoal: parsed.cleanGoal || text,
-          };
-        }
-      } else {
-        const errText = await res.text();
-        console.warn('Intent LLM HTTP error:', res.status, errText);
+      let raw = data.choices?.[0]?.message?.content || '{}';
+      if (raw.includes('</think>')) raw = raw.split('</think>')[1].trim();
+      if (raw.startsWith('```')) {
+        raw = raw.replace(/^```json?\s*/, '').replace(/```\s*$/, '').trim();
+      }
+      const parsed = JSON.parse(raw);
+      if (parsed.targetUrl) {
+        let url = parsed.targetUrl.trim();
+        if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+        return {
+          targetUrl: url,
+          cleanGoal: parsed.cleanGoal || text,
+        };
       }
     } catch (e) {
       console.warn('Intent LLM extraction exception:', e.message);

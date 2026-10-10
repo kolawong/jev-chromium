@@ -22,6 +22,41 @@ const mainBtnIcon = document.getElementById('mainBtnIcon');
 const mainBtnLabel = document.getElementById('mainBtnLabel');
 const stepBtn = document.getElementById('stepBtn');
 const resetBtn = document.getElementById('resetBtn');
+
+function hydrateDataIcons(root = document) {
+  const pack = window.JEV_ICONS || {};
+  root.querySelectorAll('[data-icon]').forEach((el) => {
+    const name = el.getAttribute('data-icon');
+    if (pack[name]) el.innerHTML = pack[name];
+  });
+}
+
+function setFeedback(el, kind, message) {
+  if (!el) return;
+  const pack = window.JEV_ICONS || {};
+  const icon =
+    kind === 'ok' ? pack.check : kind === 'err' ? pack.x : kind === 'busy' ? pack.loader : pack.alert;
+  el.className = `test-feedback ${kind === 'ok' ? 'success' : kind === 'busy' ? 'pending' : 'error'}`;
+  el.innerHTML = `<span class="feedback-icon">${icon || ''}</span><span class="feedback-text"></span>`;
+  const text = el.querySelector('.feedback-text');
+  if (text) text.textContent = message;
+}
+
+function setPromptError(message) {
+  const composer = document.getElementById('promptComposer');
+  const hint = document.getElementById('promptErrorHint');
+  if (!composer || !hint) return;
+  if (!message) {
+    composer.classList.remove('has-error');
+    hint.textContent = '';
+    return;
+  }
+  composer.classList.add('has-error');
+  hint.textContent = message;
+}
+
+hydrateDataIcons();
+
 const pixelGrid = document.getElementById('pixelGrid');
 
 const backBtn = document.getElementById('backBtn');
@@ -76,6 +111,7 @@ const STATUS_LABELS = {
   blocked: '已受阻',
   done: '已完成',
   error: '异常中断',
+  waiting_for_user: '待你处理',
 };
 
 // 1. Navigation Controls
@@ -130,10 +166,12 @@ tabSettingsBtn?.addEventListener('click', () => switchTab('settings'));
 
 // 5. Main Action Handler (Run / Pause / Resume)
 function handleMainAction() {
+  setPromptError('');
   const text = promptInput.value.trim();
 
-  // If paused -> resume
-  if (currentStatus === 'paused') {
+  // If paused / handoff -> resume
+  if (currentStatus === 'paused' || currentStatus === 'waiting_for_user') {
+    setPromptError('');
     window.agentAPI.resume();
     return;
   }
@@ -146,6 +184,7 @@ function handleMainAction() {
 
   // If empty, prompt user
   if (!text) {
+    setPromptError('请输入自然语言目标，或直接粘贴网址后再运行。');
     promptInput.placeholder = '请在此输入目标（如：查询航班）或网址后回车...';
     promptInput.focus();
     return;
@@ -237,6 +276,17 @@ window.agentAPI.onState((state) => {
   // Update Thinking State Banner
   updateThinkingBanner(currentStatus, state);
 
+  // Human handoff banner
+  const handoff = document.getElementById('humanHandoffBanner');
+  const handoffText = document.getElementById('humanHandoffText');
+  if (handoff) {
+    const needsHuman = currentStatus === 'waiting_for_user' || state.requiresHumanIntervention;
+    handoff.classList.toggle('hidden', !needsHuman);
+    if (needsHuman && handoffText) {
+      handoffText.textContent = state.blockedReason || state.statusTextOverride || '验证码、登录或权限确认完成后，点「我已处理，继续」。';
+    }
+  }
+
   // Render Task Rows
   renderTaskRows(history, state.decision, isBusy);
 
@@ -268,6 +318,11 @@ function updateMainButton(status) {
     mainBtn.classList.add('mode-paused');
     mainBtnIcon.innerHTML = SVG.resume;
     mainBtnLabel.textContent = '继续';
+    resetBtn?.classList.remove('hidden');
+  } else if (status === 'waiting_for_user') {
+    mainBtn.classList.add('mode-paused');
+    mainBtnIcon.innerHTML = SVG.resume;
+    mainBtnLabel.textContent = '我已处理，继续';
     resetBtn?.classList.remove('hidden');
   } else {
     mainBtnIcon.innerHTML = SVG.play;
@@ -603,36 +658,34 @@ document.querySelectorAll('.toggle-pwd-btn').forEach((btn) => {
 
 // Test Jev Connection
 testJevBtn?.addEventListener('click', async () => {
-  testJevFeedback.className = 'test-feedback loading';
-  testJevFeedback.textContent = '正在向 TypeSafe 发起握手测试...';
-  const res = await window.agentAPI.testConnection('typesafe', {
-    typeSafeApiKey: cfgTypeSafeApiKey.value,
-    typeSafeModel: cfgTypeSafeModel.value,
-  });
-  if (res.success) {
-    testJevFeedback.className = 'test-feedback success';
-    testJevFeedback.textContent = `✓ ${res.message || '连接成功'}`;
-  } else {
-    testJevFeedback.className = 'test-feedback error';
-    testJevFeedback.textContent = `✕ 测试失败: ${res.error || '无法连接'}`;
+  testJevBtn.disabled = true;
+  setFeedback(testJevFeedback, 'busy', '正在向 TypeSafe 发起握手测试...');
+  try {
+    const res = await window.agentAPI.testConnection('typesafe', {
+      typeSafeApiKey: cfgTypeSafeApiKey.value,
+      typeSafeModel: cfgTypeSafeModel.value,
+    });
+    if (res.success) setFeedback(testJevFeedback, 'ok', res.message || '连接成功');
+    else setFeedback(testJevFeedback, 'err', res.error || '无法连接');
+  } finally {
+    testJevBtn.disabled = false;
   }
 });
 
 // Test Text Model Connection
 testTextModelBtn?.addEventListener('click', async () => {
-  testTextFeedback.className = 'test-feedback loading';
-  testTextFeedback.textContent = '正在向模型发送测试请求...';
-  const res = await window.agentAPI.testConnection('text_model', {
-    textModelApiKey: cfgTextModelApiKey.value,
-    textModelBaseUrl: cfgTextModelBaseUrl.value,
-    textModel: cfgTextModel.value,
-  });
-  if (res.success) {
-    testTextFeedback.className = 'test-feedback success';
-    testTextFeedback.textContent = `✓ ${res.message || '模型响应正常'}`;
-  } else {
-    testTextFeedback.className = 'test-feedback error';
-    testTextFeedback.textContent = `✕ 测试失败: ${res.error || '无法连接'}`;
+  testTextModelBtn.disabled = true;
+  setFeedback(testTextFeedback, 'busy', '正在向模型发送测试请求...');
+  try {
+    const res = await window.agentAPI.testConnection('text_model', {
+      textModelApiKey: cfgTextModelApiKey.value,
+      textModelBaseUrl: cfgTextModelBaseUrl.value,
+      textModel: cfgTextModel.value,
+    });
+    if (res.success) setFeedback(testTextFeedback, 'ok', res.message || '模型响应正常');
+    else setFeedback(testTextFeedback, 'err', res.error || '无法连接');
+  } finally {
+    testTextModelBtn.disabled = false;
   }
 });
 
@@ -651,7 +704,7 @@ saveSettingsBtn?.addEventListener('click', async () => {
   saveSettingsBtn.textContent = '保存配置';
 
   if (res.success) {
-    saveStatusHint.textContent = '✓ 配置已成功更新并持久化！';
+    setFeedback(saveStatusHint, 'ok', '配置已成功更新并持久化');
     saveStatusHint.style.color = 'var(--green)';
     if (topModelLabel) {
       topModelLabel.textContent = newSettings.typeSafeModel || 'Jev 1.0';
@@ -660,7 +713,7 @@ saveSettingsBtn?.addEventListener('click', async () => {
       closeSettings();
     }, 600);
   } else {
-    saveStatusHint.textContent = `✕ 保存失败: ${res.error}`;
+    setFeedback(saveStatusHint, 'err', `保存失败: ${res.error}`);
     saveStatusHint.style.color = 'var(--red)';
   }
 });
