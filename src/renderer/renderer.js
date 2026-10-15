@@ -91,7 +91,9 @@ const copyLogsBtn = document.getElementById('copyLogsBtn');
 const clearLogsBtn = document.getElementById('clearLogsBtn');
 
 // State
+const BUSY_STATUSES = ['planning', 'observing', 'deciding', 'executing', 'collecting', 'verifying', 'running', 'generating_text', 'retrying', 'waiting', 'pausing', 'stopping'];
 let currentStatus = 'ready';
+let currentTask = null;
 let isDrawerOpen = true;
 let currentTab = 'steps';
 let activeFilter = 'all';
@@ -101,6 +103,8 @@ let timerInterval = null;
 
 // Status Localization
 const STATUS_LABELS = {
+  planning: '规划任务', observing: '观察页面', deciding: '选择动作', executing: '执行操作',
+  collecting: '搜集信息', verifying: '验证结果', pausing: '正在暂停', stopping: '正在停止', stopped: '已停止',
   ready: '就绪',
   idle: '就绪',
   running: '运行中',
@@ -165,19 +169,19 @@ tabSettingsBtn?.addEventListener('click', () => switchTab('settings'));
 
 
 // 5. Main Action Handler (Run / Pause / Resume)
-function handleMainAction() {
+async function handleMainAction() {
   setPromptError('');
   const text = promptInput.value.trim();
 
   // If paused / handoff -> resume
-  if (currentStatus === 'paused' || currentStatus === 'waiting_for_user') {
+  if (['paused', 'waiting_for_user', 'error'].includes(currentStatus) && text === currentTask?.goal) {
     setPromptError('');
     window.agentAPI.resume();
     return;
   }
 
   // If running -> pause
-  if (['running', 'generating_text', 'retrying', 'waiting'].includes(currentStatus)) {
+  if (BUSY_STATUSES.includes(currentStatus)) {
     window.agentAPI.pause();
     return;
   }
@@ -199,14 +203,15 @@ function handleMainAction() {
   // Start Agent task
   startTimer();
   resetBtn?.classList.remove('hidden');
-  window.agentAPI.start({ goal: text });
+  const result = await window.agentAPI.start({ goal: text });
+  if (result?.error) setPromptError(result.error);
 }
 
 mainBtn?.addEventListener('click', handleMainAction);
 
 stepBtn?.addEventListener('click', () => {
-  if (['idle', 'ready', 'paused'].includes(currentStatus)) {
-    window.agentAPI.step();
+  if (['idle', 'ready', 'paused', 'done', 'stopped', 'waiting_for_user', 'error'].includes(currentStatus)) {
+    window.agentAPI.step(promptInput.value.trim());
   }
 });
 
@@ -221,6 +226,7 @@ promptInput?.addEventListener('keydown', (e) => {
     handleMainAction();
   }
 });
+promptInput?.addEventListener('input', () => updateMainButton(currentStatus));
 
 // 6. Live Timer
 function startTimer() {
@@ -241,15 +247,18 @@ function stopTimer() {
 }
 
 // 7. Update UI from State
-window.agentAPI.onState((state) => {
-  const prevStatus = currentStatus;
+function applyState(state) {
   currentStatus = state.status || 'ready';
+  if (state.task !== undefined) currentTask = state.task ? { ...state.task, goal: state.goal } : null;
+  renderResults();
+  stepBtn.disabled = BUSY_STATUSES.includes(currentStatus);
+  if (BUSY_STATUSES.includes(currentStatus) && !timerInterval) startTimer();
+  if (state.elapsed_ms !== undefined) startTime = Date.now() - state.elapsed_ms;
 
   // Update Main Button appearance
-  updateMainButton(currentStatus);
 
   // Update Pixel Grid animation (01 Loading State)
-  const isBusy = ['running', 'generating_text', 'retrying', 'waiting'].includes(currentStatus);
+  const isBusy = BUSY_STATUSES.includes(currentStatus);
   if (isBusy) {
     pixelGrid?.classList.add('is-loading');
   } else {
@@ -272,6 +281,7 @@ window.agentAPI.onState((state) => {
   if (state.goal && !promptInput.value) {
     promptInput.value = state.goal;
   }
+  updateMainButton(currentStatus);
 
   // Update Thinking State Banner
   updateThinkingBanner(currentStatus, state);
@@ -291,30 +301,40 @@ window.agentAPI.onState((state) => {
   renderTaskRows(history, state.decision, isBusy);
 
   // If task finished or errored
-  if (['done', 'blocked', 'error'].includes(currentStatus)) {
+  if (['done', 'blocked', 'error', 'paused', 'stopped', 'waiting_for_user'].includes(currentStatus)) {
     stopTimer();
     if (currentStatus === 'done') {
       kpiStatus.style.color = 'var(--green)';
     } else if (currentStatus === 'blocked') {
       kpiStatus.style.color = 'var(--orange)';
-    } else {
+    } else if (currentStatus === 'error') {
       kpiStatus.style.color = 'var(--red)';
+    } else {
+      kpiStatus.style.color = 'var(--ink-2)';
     }
   } else {
     kpiStatus.style.color = 'var(--ink)';
   }
-});
+}
+
+window.agentAPI.onState(applyState);
+window.agentAPI.getStatus().then(applyState).catch(err => setPromptError(err.message));
+window.agentAPI.onError(message => setPromptError(message));
 
 // Update Main Action Button
 function updateMainButton(status) {
   mainBtn.className = 'btn-primary';
+  mainBtn.disabled = ['pausing', 'stopping'].includes(status);
 
-  if (['running', 'generating_text', 'retrying', 'waiting'].includes(status)) {
+  if (BUSY_STATUSES.includes(status)) {
     mainBtn.classList.add('mode-running');
     mainBtnIcon.innerHTML = SVG.pause;
     mainBtnLabel.textContent = '暂停';
     resetBtn?.classList.remove('hidden');
-  } else if (status === 'paused') {
+  } else if (currentTask && promptInput.value.trim() !== currentTask.goal) {
+    mainBtnIcon.innerHTML = SVG.play;
+    mainBtnLabel.textContent = '运行新任务';
+  } else if (status === 'paused' || status === 'error') {
     mainBtn.classList.add('mode-paused');
     mainBtnIcon.innerHTML = SVG.resume;
     mainBtnLabel.textContent = '继续';
@@ -334,7 +354,7 @@ function updateMainButton(status) {
 function updateThinkingBanner(status, state) {
   if (!thinkingBanner) return;
 
-  if (['running', 'generating_text', 'retrying', 'waiting'].includes(status)) {
+  if (BUSY_STATUSES.includes(status)) {
     thinkingBanner.classList.remove('hidden');
     if (status === 'generating_text') {
       thinkingText.textContent = 'MiniMax 正在生成字段输入内容...';
@@ -343,7 +363,7 @@ function updateThinkingBanner(status, state) {
     } else if (status === 'waiting') {
       thinkingText.textContent = '正在等待页面过渡与结果加载...';
     } else {
-      thinkingText.textContent = 'Jev 正在分析页面并决策下一步...';
+      thinkingText.textContent = state.tickerMessage || ({ planning: '正在规划任务与完成条件…', collecting: '正在从当前页面搜集信息…', verifying: '正在核对完成条件与来源证据…', observing: '正在读取页面…' }[status]) || 'Jev 正在分析网页并决策下一步…';
     }
   } else {
     thinkingBanner.classList.add('hidden');
@@ -353,7 +373,7 @@ function updateThinkingBanner(status, state) {
 // Format Action Title
 function getActionTitle(action) {
   const kind = (action.kind || action.operation || '').toLowerCase();
-  const label = action.label || action.target || '';
+  const label = action.label || action.action || action.target || '';
   const value = action.value || action.text || '';
 
   if (kind === 'type_text' || kind === 'fill') {
@@ -374,6 +394,7 @@ function getActionTitle(action) {
   if (kind === 'navigate') {
     return `导航至 ${action.url || label}`;
   }
+  if (kind === 'select') return `选择 "${action.label || action.action || action.target}"`;
   if (kind === 'done') {
     return '目标已达成，任务结束';
   }
@@ -399,17 +420,17 @@ function renderTaskRows(history, currentDecision, isBusy) {
     const kind = (step.kind || step.operation || 'click').toLowerCase();
     const title = getActionTitle(step);
     const chipIcon = SVG[kind] || SVG.click;
-    const duration = step.elapsed_ms ? `${step.elapsed_ms}ms` : '';
-    const confidence = step.confidence ? `${Math.round(step.confidence * 100)}%` : '';
+    const duration = step.duration_ms ? `${step.duration_ms}ms` : '';
+    const confidence = typeof step.confidence === 'number' ? `${Math.round(step.confidence * 100)}%` : '';
 
     html += `
       <div class="task-row" data-index="${idx}">
         <div class="task-row-header" onclick="this.parentElement.classList.toggle('expanded')">
-          <div class="task-status-icon completed">
-            ${SVG.check}
+          <div class="task-status-icon ${step.outcome === 'failed' ? 'failed' : step.outcome === 'unconfirmed' ? '' : 'completed'}">
+            ${step.outcome === 'failed' ? '!' : step.outcome === 'unconfirmed' ? '?' : SVG.check}
           </div>
           <div class="task-info">
-            <span class="task-title">${title}</span>
+            <span class="task-title">${escapeHtml(title)}</span>
             <div class="task-meta">
               <span class="tool-chip ${kind}">
                 ${chipIcon}
@@ -422,6 +443,7 @@ function renderTaskRows(history, currentDecision, isBusy) {
           <span style="color:var(--ink-3);">${SVG.chevronDown}</span>
         </div>
         <div class="task-row-details">
+          ${step.error ? `<div class="task-detail-row">${escapeHtml(step.error)}</div>` : ''}
           ${step.target ? `<div class="task-detail-row"><span class="task-detail-key">目标:</span><span class="task-detail-val">${escapeHtml(step.target)}</span></div>` : ''}
           ${step.label ? `<div class="task-detail-row"><span class="task-detail-key">元素标签:</span><span class="task-detail-val">${escapeHtml(step.label)}</span></div>` : ''}
           ${step.value ? `<div class="task-detail-row"><span class="task-detail-key">输入值:</span><span class="task-detail-val">${escapeHtml(step.value)}</span></div>` : ''}
@@ -710,7 +732,7 @@ saveSettingsBtn?.addEventListener('click', async () => {
       topModelLabel.textContent = newSettings.typeSafeModel || 'Jev 1.0';
     }
     setTimeout(() => {
-      closeSettings();
+      switchTab('steps');
     }, 600);
   } else {
     setFeedback(saveStatusHint, 'err', `保存失败: ${res.error}`);
@@ -718,3 +740,50 @@ saveSettingsBtn?.addEventListener('click', async () => {
   }
 });
 
+
+
+function renderResults() {
+  const panel = document.getElementById('collectionResults');
+  const summary = document.getElementById('taskSummary');
+  const plan = currentTask?.plan;
+  summary.classList.toggle('hidden', !plan);
+  if (plan) {
+    const verification = currentTask.verification;
+    summary.textContent = plan.summary + (currentTask.progress ? ' · ' + currentTask.progress.message : '') +
+      (verification ? (verification.complete ? ' · 已验证完成' : ' · ' + verification.reason) : '');
+  }
+  const collect = plan?.mode === 'collect';
+  panel.classList.toggle('hidden', !collect);
+  if (!collect) return;
+  const rows = currentTask.rows || [];
+  document.getElementById('resultCount').textContent = `(${rows.length})`;
+  document.getElementById('resultHint').textContent = currentStatus === 'done'
+    ? '完成条件已核对。未找到的字段保留空缺；悬停单元格可查看来源原文。'
+    : '当前为部分结果，尚未通过完成验证。未找到的字段不会自动补写。';
+  document.getElementById('copyResultsBtn').disabled = !rows.length;
+  document.getElementById('exportResultsBtn').disabled = !rows.length;
+  document.getElementById('resultTable').innerHTML = rows.length
+    ? `<table><thead><tr>${[...plan.columns, '来源'].map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead><tbody>` +
+      rows.map((r, index) => `<tr>${plan.columns.map(c => `<td title="${escapeHtml(r.evidence[c] || '页面未提供此字段')}">${escapeHtml(r.values[c] ?? '未找到')}</td>`).join('')}<td><button class="result-source" data-source-index="${index}">查看来源</button></td></tr>`).join('') + '</tbody></table>'
+    : `<p class="result-hint">${BUSY_STATUSES.includes(currentStatus) ? '正在等待可验证的信息…' : '尚无搜集结果，可继续或输入新目标。'}</p>`;
+}
+
+document.getElementById('resultTable').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-source-index]');
+  if (!button) return;
+  const row = currentTask?.rows[Number(button.dataset.sourceIndex)];
+  if (row) await window.agentAPI.navigate(row.sourceUrl);
+});
+document.getElementById('copyResultsBtn').addEventListener('click', async () => {
+  try {
+    const csv = await window.agentAPI.resultsCsv(currentTask.id);
+    await navigator.clipboard.writeText(csv);
+    document.getElementById('resultHint').textContent = 'CSV 已复制，可粘贴或保存为表格。';
+  } catch (err) { setPromptError(err.message); }
+});
+document.getElementById('exportResultsBtn').addEventListener('click', async () => {
+  try {
+    const result = await window.agentAPI.exportResults(currentTask.id);
+    if (result.saved) document.getElementById('resultHint').textContent = 'CSV 表格已保存。';
+  } catch (err) { setPromptError(err.message); }
+});

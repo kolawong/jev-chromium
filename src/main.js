@@ -1,9 +1,10 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, session } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, session, dialog } = require('electron');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const { AgentRunner } = require('./agent/runner');
-const { parseGoalIntent } = require('./agent/model');
+const fs = require('fs');
+const { TaskStore, toCsv } = require('./agent/task');
 const { logger } = require('./agent/logger');
 const { getSettings, saveSettings, testConnection } = require('./agent/config');
 
@@ -17,12 +18,7 @@ const DEFAULT_HOME_URL = 'https://www.baidu.com';
 
 function sendUrlUpdate(url) {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('agent:state', {
-      status: runner ? runner.status : 'ready',
-      url,
-      goal: runner ? runner.goal : '',
-      history: runner ? runner.history : [],
-    });
+    mainWindow.webContents.send('agent:state', { ...runner?.getState(), url });
   }
 }
 
@@ -52,6 +48,16 @@ function createWindow() {
   userSession.setUserAgent(
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
   );
+  if (!userSession.listenerCount('will-download')) {
+    userSession.on('will-download', (event, item) => {
+      event.preventDefault();
+      const name = item.getFilename() || '文件';
+      logger.warn('BROWSER', `已拦截下载：${name}`);
+      if (runner && !['idle', 'done', 'stopped'].includes(runner.status)) {
+        runner.handOff(`已拦截下载 ${name}。需要保存时请自行下载，然后再继续。`);
+      }
+    });
+  }
 
   browserView = new WebContentsView({
     webPreferences: {
@@ -80,37 +86,43 @@ function createWindow() {
   mainWindow.on('resize', updateBounds);
   updateBounds();
 
+  ipcMain.removeHandler('agent:setDrawerOpen');
   ipcMain.handle('agent:setDrawerOpen', async (_event, isOpen) => {
     isDrawerOpen = Boolean(isOpen);
     updateBounds();
     return isDrawerOpen;
   });
 
-  runner = new AgentRunner(browserView.webContents);
+  runner = new AgentRunner(browserView.webContents, {
+    store: new TaskStore(path.join(app.getPath('userData'), 'tasks')),
+  });
+  const taskWindow = mainWindow;
+  const windowRunner = runner;
+  taskWindow.webContents.on('did-finish-load', () => windowRunner.emitState());
+  taskWindow.on('close', () => windowRunner.pause());
 
   runner.on('state', (state) => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('agent:state', state);
+    if (!taskWindow.isDestroyed()) {
+      taskWindow.webContents.send('agent:state', state);
     }
   });
 
   runner.on('error', (err) => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('agent:error', err);
+    if (!taskWindow.isDestroyed()) {
+      taskWindow.webContents.send('agent:error', err);
     }
   });
 
-  // Stream logs to renderer in real-time
-  logger.on('log', (entry) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('agent:log', entry);
-    }
-  });
-
-  logger.on('clear', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('agent:clearLogs');
-    }
+  // Window-scoped listeners are removed on close (including macOS reopen).
+  const onLog = entry => { if (!taskWindow.isDestroyed()) taskWindow.webContents.send('agent:log', entry); };
+  const onClear = () => { if (!taskWindow.isDestroyed()) taskWindow.webContents.send('agent:clearLogs'); };
+  logger.on('log', onLog);
+  logger.on('clear', onClear);
+  const taskBrowser = browserView;
+  taskWindow.on('closed', () => {
+    logger.removeListener('log', onLog);
+    logger.removeListener('clear', onClear);
+    if (!taskBrowser.webContents.isDestroyed()) taskBrowser.webContents.close();
   });
 
   browserView.webContents.setWindowOpenHandler(({ url }) => {
@@ -135,6 +147,8 @@ function createWindow() {
 
 ipcMain.handle('agent:navigate', async (_event, url) => {
   if (!url) return;
+  runner.pause();
+  await runner.loopPromise;
   let target = url.trim();
   if (!/^https?:\/\//i.test(target)) {
     target = 'https://' + target;
@@ -151,6 +165,8 @@ ipcMain.handle('agent:navigate', async (_event, url) => {
 });
 
 ipcMain.handle('agent:goHome', async () => {
+  runner.pause();
+  await runner.loopPromise;
   if (browserView) {
     logger.info('NAV', `点击 Home 按钮返回主页: ${DEFAULT_HOME_URL}`);
     await browserView.webContents.loadURL(DEFAULT_HOME_URL);
@@ -182,85 +198,27 @@ ipcMain.handle('agent:testConnection', async (_event, { type, config }) => {
 
 
 ipcMain.handle('agent:start', async (_event, { url, goal }) => {
-  const currentUrl = browserView.webContents.getURL();
-  let effectiveGoal = (goal || '').trim();
-  let effectiveUrl = (url || '').trim();
-  let didNavigate = false;
-  const navStart = Date.now();
-
-  // 1. Natural Language Intent & Target URL extraction
-  try {
-    const intent = await parseGoalIntent(effectiveGoal, currentUrl);
-    if (intent.targetUrl) {
-      effectiveUrl = intent.targetUrl;
-      // Notify frontend to update the URL omnibox
-      sendUrlUpdate(effectiveUrl);
-    }
-    if (intent.cleanGoal) {
-      effectiveGoal = intent.cleanGoal;
-    }
-  } catch (err) {
-    console.warn('Intent parsing failed, continuing with current URL:', err.message);
-  }
-
-  // 2. Perform navigation if needed
-  if (effectiveUrl) {
-    let target = effectiveUrl;
-    if (!/^https?:\/\//i.test(target)) target = 'https://' + target;
-    const current = browserView.webContents.getURL();
-    if (current !== target && !current.startsWith(target)) {
-      try {
-        console.log(`[Main] Navigating from ${current} to ${target}...`);
-        await Promise.race([
-          browserView.webContents.loadURL(target),
-          new Promise((resolve) => setTimeout(resolve, 6000)),
-        ]);
-        didNavigate = true;
-        console.log('[Main] Navigation finished or settled.');
-        await new Promise((resolve) => setTimeout(resolve, 600));
-      } catch (err) {
-        if (err.code !== 'ERR_ABORTED') {
-          console.warn('[Main] Navigation error:', err.message);
-        }
-      }
-    }
-  }
-
-  const initialHistory = [];
-  if (didNavigate && effectiveUrl) {
-    initialHistory.push({
-      step: 1,
-      action: `智能识别目标网站并跳转: ${effectiveUrl}`,
-      kind: 'navigate',
-      choice: 'NAVIGATE',
-      text: effectiveUrl,
-      latency_ms: Math.max(50, Date.now() - navStart),
-      confidence: 100,
-      operation: 'NAVIGATE',
-      page_changed: true,
-      elapsed_ms: Date.now() - navStart,
-    });
-  }
-
-  runner.start(effectiveGoal, initialHistory).catch((err) => {
-    console.error('Agent loop stopped:', err.message);
+  if (runner.busy) return { error: '当前任务仍在运行或停止中' };
+  if (!goal?.trim()) return { error: '请输入任务目标' };
+  runner.start(goal, [], { url }).catch(err => {
+    if (!mainWindow.isDestroyed()) mainWindow.webContents.send('agent:error', err.message);
   });
-  return { status: 'started', effectiveUrl };
+  return { status: 'started' };
 });
 
 ipcMain.handle('agent:pause', async () => {
   runner.pause();
-  return { status: 'paused' };
+  return { status: runner.status };
 });
 
-ipcMain.handle('agent:step', async () => {
-  runner.step();
+ipcMain.handle('agent:step', async (_event, goal) => {
+  runner.step(goal).catch(err => mainWindow.webContents.send('agent:error', err.message));
   return { status: 'stepping' };
 });
 
 ipcMain.handle('agent:stop', async () => {
   runner.stop();
-  return { status: 'stopped' };
+  return { status: runner.status };
 });
 
 ipcMain.handle('agent:resume', async () => {
@@ -276,6 +234,8 @@ ipcMain.handle('agent:handOff', async (_event, reason) => {
 });
 
 ipcMain.handle('agent:clearSession', async () => {
+  runner.pause();
+  await runner.loopPromise;
   if (userSession) {
     await userSession.clearStorageData();
     console.log('[Main] User persistent session cleared.');
@@ -284,6 +244,8 @@ ipcMain.handle('agent:clearSession', async () => {
 });
 
 ipcMain.handle('agent:goBack', async () => {
+  runner.pause();
+  await runner.loopPromise;
   if (browserView && browserView.webContents.canGoBack()) {
     browserView.webContents.goBack();
   }
@@ -291,6 +253,8 @@ ipcMain.handle('agent:goBack', async () => {
 });
 
 ipcMain.handle('agent:goForward', async () => {
+  runner.pause();
+  await runner.loopPromise;
   if (browserView && browserView.webContents.canGoForward()) {
     browserView.webContents.goForward();
   }
@@ -298,18 +262,30 @@ ipcMain.handle('agent:goForward', async () => {
 });
 
 ipcMain.handle('agent:reload', async () => {
+  runner.pause();
+  await runner.loopPromise;
   if (browserView) {
     browserView.webContents.reload();
   }
   return true;
 });
 
-ipcMain.handle('agent:status', async () => {
-  return {
-    status: runner.status,
-    url: browserView.webContents.getURL(),
-    history: runner.history,
-  };
+ipcMain.handle('agent:status', async () => runner.getState());
+
+ipcMain.handle('agent:resultsCsv', async (_event, taskId) => {
+  if (runner.task?.id !== taskId) throw new Error('任务已变化，请重试');
+  return toCsv(runner.task);
+});
+ipcMain.handle('agent:exportResults', async (_event, taskId) => {
+  if (runner.task?.id !== taskId) throw new Error('任务已变化，请重试');
+  const csv = toCsv(runner.task);
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '导出搜集结果', defaultPath: `网页搜集-${new Date().toISOString().slice(0, 10)}.csv`,
+    filters: [{ name: 'CSV 表格', extensions: ['csv'] }],
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  await fs.promises.writeFile(result.filePath, csv, { mode: 0o600 });
+  return { saved: true };
 });
 
 app.whenReady().then(async () => {

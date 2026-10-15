@@ -69,7 +69,7 @@
         </button>
 
         <!-- Reset Button -->
-        <button id="resetBtn" class="btn-quiet hidden" title="重置任务">
+        <button id="resetBtn" class="btn-quiet hidden" title="停止任务">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
             <rect x="4" y="4" width="16" height="16" rx="2"/>
           </svg>
@@ -204,6 +204,19 @@
           <span id="thinkingTimer" class="thinking-timer">0.0s</span>
         </div>
 
+        <div id="taskSummary" class="task-summary hidden" role="status"></div>
+        <section id="collectionResults" class="task-row hidden" aria-label="搜集结果">
+          <div class="result-toolbar">
+            <strong>搜集结果 <span id="resultCount"></span></strong>
+            <div class="log-actions">
+              <button id="copyResultsBtn" class="btn-tool" title="复制 CSV 表格">复制</button>
+              <button id="exportResultsBtn" class="btn-tool" title="导出 CSV 表格">导出 CSV</button>
+            </div>
+          </div>
+          <p id="resultHint" class="result-hint"></p>
+          <div id="resultTable" class="result-table-wrap" tabindex="0" aria-label="结果表格，可横向滚动"></div>
+        </section>
+
         <!-- Task Rows Container -->
         <div id="stepsContainer" style="display:flex; flex-direction:column; gap:8px;"></div>
 
@@ -215,7 +228,7 @@
             </svg>
           </div>
           <span class="empty-title">暂无执行步骤</span>
-          <span class="empty-sub">在上方输入目标或点击上方快捷标签，Jev 将在此实时呈现任务执行卡片。</span>
+          <span class="empty-sub">在上方输入目标，例如：跨页面搜集 3 款产品的名称、价格和库存，整理成表格。</span>
         </div>
       </div>
 

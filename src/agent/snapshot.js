@@ -22,13 +22,18 @@ const SNAPSHOT_SCRIPT = `(() => {
   const matchedAdapter = (__SITE_ADAPTERS__ || []).find((a) => new RegExp(a.pagePatternSource, 'i').test(location.href));
   const isSearchPage = Boolean(matchedAdapter);
   const searchResultLinks = new Map();
+  const sponsored = link => {
+    const container = link.closest('[data-tuiguang], [data-text-ad], .b_ad, #tads, #tadsb');
+    // Baidu sponsored results use baidu.php instead of the organic /link redirect.
+    return Boolean(container || /(?:baidu\\.com\\/baidu\\.php|googleadservices\\.com|bing\\.com\\/aclick)/i.test(link.href));
+  };
   if (matchedAdapter) {
     const resultContainers = document.querySelectorAll(matchedAdapter.resultContainers);
     let ordinal = 1;
     for (const container of resultContainers) {
       if (!visible(container)) continue;
       const titleLink = container.querySelector('h2 a, h3 a, .c-title a, a.c-title-text, a[data-showurl-highlight]');
-      if (titleLink && visible(titleLink) && !searchResultLinks.has(titleLink)) {
+      if (titleLink && visible(titleLink) && !sponsored(titleLink) && !searchResultLinks.has(titleLink)) {
         searchResultLinks.set(titleLink, ordinal++);
       }
     }
@@ -37,7 +42,7 @@ const SNAPSHOT_SCRIPT = `(() => {
       const noise = new RegExp(matchedAdapter.noiseLabel, 'i');
       let fallbackOrd = 1;
       for (const hl of headingLinks) {
-        if (!visible(hl)) continue;
+        if (!visible(hl) || sponsored(hl)) continue;
         const txt = hl.innerText.trim();
         if (txt.length > 3 && !noise.test(txt)) {
           searchResultLinks.set(hl, fallbackOrd++);
@@ -222,7 +227,7 @@ const SNAPSHOT_SCRIPT = `(() => {
     if (rname==='gridcell' && e.querySelector('button,[role="button"]')) continue;
     const base={node:identity(e),role:rname,label:name(e)||rname,
       rect:{x:clampedX,y:clampedY,w:r.width,h:r.height},
-      search_result_ordinal: searchResultLinks.get(e) || null};
+      search_result_ordinal: searchResultLinks.get(e) || null, href: e.tagName === 'A' ? e.href : null};
     for (const key of ['checked','selected','expanded']) {
       const value=e.getAttribute('aria-'+key);
       if (value!==null) base[key]=value;
@@ -268,6 +273,48 @@ const SNAPSHOT_SCRIPT = `(() => {
     scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
 })()`;
 
-module.exports = {
-  SNAPSHOT_SCRIPT,
-};
+// Prefer main text, then the rest of the body. Page in 24k windows so a long page is not frozen at its header.
+function contentScript(skip = 0) {
+  const start = Math.max(0, Math.floor(Number(skip) || 0));
+  return `(() => {
+    if (!document.body) return null;
+    const visible = (el) => Boolean(el) && !el.closest('script,style,noscript,template,[aria-hidden="true"],[inert]') &&
+      el.checkVisibility({checkOpacity:true,checkVisibilityCSS:true});
+    const parts = [], seen = new Set();
+    const main = document.querySelector('main, article, [role="main"]');
+    const roots = main && main !== document.body ? [main, document.body] : [document.body];
+    for (const root of roots) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (seen.has(node)) continue;
+        seen.add(node);
+        const parent = node.parentElement, value = node.textContent.trim();
+        if (!value || !visible(parent) || parent.closest('option')) continue;
+        parts.push(value);
+      }
+    }
+    for (const el of document.querySelectorAll('input, textarea, select')) {
+      if (!visible(el) || ['password', 'hidden', 'file'].includes(el.type)) continue;
+      const value = el.tagName === 'SELECT'
+        ? [...el.selectedOptions].map(option => option.label.trim()).filter(Boolean).join(', ')
+        : String(el.value || '').trim();
+      if (value) parts.push(value);
+    }
+    const capped = [];
+    let total = 0, hitCap = false;
+    for (const value of parts) {
+      if (total >= 200000) { hitCap = true; break; }
+      capped.push(value);
+      total += value.length + 1;
+    }
+    const joined = capped.join('\\n');
+    const start = ${start};
+    const content = joined.slice(start, start + 24000);
+    const reachedEnd = start + content.length >= joined.length;
+    return { url: location.href, content, truncated: !reachedEnd || hitCap, consumed: content.length, total: joined.length };
+  })()`;
+}
+const CONTENT_SCRIPT = contentScript(0);
+
+module.exports = { SNAPSHOT_SCRIPT, CONTENT_SCRIPT, contentScript };

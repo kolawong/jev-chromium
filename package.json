@@ -7,8 +7,10 @@
     "start": "electron .",
     "test:model": "node scripts/test-model.js",
     "test:proxy": "electron scripts/proxy-smoke.js",
-    "test:unit": "node scripts/test-unit.js",
-    "test": "npm run test:unit && npm run test:proxy"
+    "test:unit": "node scripts/test-unit.js && node --test scripts/__tests__/*.test.js",
+    "test": "npm run test:unit && npm run test:browser",
+    "test:browser": "electron scripts/test-browser.js",
+    "test:live": "electron scripts/test-browser.js --live"
   },
   "dependencies": {
     "dotenv": "^16.4.7"

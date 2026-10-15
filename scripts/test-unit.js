@@ -3,7 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { applyDecisionSafeguards } = require('../src/agent/safeguards');
+const { applyDecisionSafeguards, isCommitAction } = require('../src/agent/safeguards');
 const { extractTargetPage, extractRequestedResultIndex } = require('../src/agent/goalParse');
 const { parseEnv, serializeEnv } = require('../src/agent/envFile');
 const { adaptersForInjection } = require('../src/agent/sites');
@@ -35,6 +35,13 @@ const blockedFill = applyDecisionSafeguards({
   history: [],
 });
 assert.strictEqual(blockedFill.selected, 'e1');
+const blockedFilter = applyDecisionSafeguards({ selected: 'BLOCKED', page,
+  goal: '页面内筛选南方航空', history: [] });
+assert.strictEqual(blockedFilter.selected, 'BLOCKED');
+assert.strictEqual(isCommitAction({ kind: 'click', label: 'Add to cart', href: 'https://shop.example/cart' }), true);
+assert.strictEqual(isCommitAction({ kind: 'fill', label: '确认订单' }), true);
+assert.strictEqual(isCommitAction({ kind: 'navigate', label: '安装包', url: 'https://example.test/python.pkg' }), true);
+assert.strictEqual(isCommitAction({ kind: 'click', label: '详情', href: 'https://example.test/item' }), false);
 
 const done = applyDecisionSafeguards({
   selected: 'DONE',
@@ -43,7 +50,8 @@ const done = applyDecisionSafeguards({
   goal: '随便看看',
   history: [],
 });
-assert.strictEqual(done.done, true);
+assert.strictEqual(done.verify, true);
+assert.strictEqual(done.done, undefined);
 
 const map = parseEnv('FOO=1\nBAR=two\n');
 map.set('FOO', '9');

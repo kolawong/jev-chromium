@@ -1169,3 +1169,18 @@ button {
   font-size: 11px; color: #f87171; display: none;
 }
 .prompt-composer.has-error .prompt-error-hint { display: block; }
+
+
+/* Collection results reuse the existing drawer, surfaces and typography. */
+.task-summary { color: var(--ink-2); font-size: 12px; padding: 8px 2px; line-height: 1.6; }
+.result-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; gap: 8px; }
+.result-hint { color: var(--ink-3); font-size: 11px; padding: 0 12px 10px; line-height: 1.6; }
+.result-table-wrap { overflow: auto; max-height: 320px; user-select: text; }
+.result-table-wrap table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.result-table-wrap th, .result-table-wrap td { padding: 8px 10px; border-top: 1px solid var(--line); text-align: left; min-width: 90px; max-width: 220px; overflow-wrap: anywhere; }
+.result-table-wrap th { color: var(--ink-2); background: var(--inset); position: sticky; top: 0; }
+.result-source { color: var(--accent-ink); white-space: nowrap; font-size: 12px; }
+#collectionResults { flex-shrink: 0; }
+button:disabled { cursor: default; opacity: .45; }
+
+.hidden { display: none !important; }
